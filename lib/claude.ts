@@ -23,7 +23,9 @@ async function runUntilSubmitted<T>(params: {
   const messages: Anthropic.Beta.BetaMessageParam[] = [{ role: "user", content: params.prompt }];
 
   for (let turn = 0; turn < 6; turn++) {
-    const response = await claude().beta.messages.create({
+    // Streamed under the hood (the SDK requires it for long requests); we only
+    // use the final message, so nothing streams to the phone.
+    const response = await claude().beta.messages.stream({
       model: MODEL,
       max_tokens: params.maxTokens,
       system: params.system,
@@ -34,7 +36,7 @@ async function runUntilSubmitted<T>(params: {
       // On a safety decline, the API retries on Anthropic's recommended fallback model.
       betas: ["server-side-fallback-2026-07-01"],
       fallbacks: "default",
-    });
+    }).finalMessage();
 
     if (response.stop_reason === "refusal") throw new Error("Claude declined this request");
 
@@ -106,9 +108,9 @@ Organize the result into 6 to 10 topics, each with a short descriptive title (fo
 
 When you are done, call submit_pack.`,
     tool: PACK_TOOL,
-    maxSearches: 12,
+    maxSearches: 8,
     effort: "medium",
-    maxTokens: 32000,
+    maxTokens: 24000,
   });
 
   return {

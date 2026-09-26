@@ -623,3 +623,91 @@ a {
     animation: none;
   }
 }
+
+/* ── evidence pack sheet ───────────────────────────── */
+
+.sheet {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: calc(var(--safe-top) + 12px) 16px 0;
+  max-width: 640px;
+  margin: 0 auto;
+}
+
+.sheet-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.sheet-topic {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sheet-body {
+  flex: 1;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding-bottom: calc(var(--safe-bottom) + 24px);
+}
+
+.pack-topic {
+  margin-top: 16px;
+}
+
+.pack-title {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--accent);
+  margin: 0 0 6px;
+}
+
+.pack-title::before {
+  content: "## ";
+  color: var(--faint);
+}
+
+.pack-fact {
+  border-top: 1px dashed var(--border);
+  padding: 8px 0;
+  font-size: 0.85rem;
+}
+
+.pack-fact summary {
+  cursor: pointer;
+  list-style: none;
+}
+
+.pack-fact summary::-webkit-details-marker {
+  display: none;
+}
+
+.pack-fact summary::before {
+  content: "› ";
+  color: var(--faint);
+}
+
+.pack-fact[open] summary::before {
+  content: "⌄ ";
+}
+
+.pack-fact blockquote {
+  margin: 6px 0;
+  padding-left: 10px;
+  border-left: 2px solid var(--border);
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.pack-fact a {
+  font-size: 0.75rem;
+  text-decoration: none;
+}

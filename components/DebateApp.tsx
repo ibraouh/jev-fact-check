@@ -150,6 +150,67 @@ function ThemeToggle() {
   );
 }
 
+/** Full-screen list of the evidence pack's facts. Opens from setup or mid-debate. */
+function PackSheet({ pack, onClose }: { pack: EvidencePack; onClose: () => void }) {
+  const [q, setQ] = useState("");
+  useEffect(() => {
+    // Lock the page behind the sheet so scrolling stays inside it.
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => {
+      document.body.style.overflow = prev;
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [onClose]);
+
+  const needle = q.trim().toLowerCase();
+  const topics = pack.topics
+    .map((t) => ({
+      ...t,
+      facts: needle
+        ? t.facts.filter((f) => `${t.title} ${f.statement} ${f.quote} ${f.source}`.toLowerCase().includes(needle))
+        : t.facts,
+    }))
+    .filter((t) => t.facts.length > 0);
+
+  return (
+    <div className="sheet" role="dialog" aria-modal="true" aria-label="Evidence pack">
+      <div className="sheet-head">
+        <div style={{ minWidth: 0 }}>
+          <div className="card-title">evidence pack</div>
+          <div className="hint sheet-topic">{pack.topic}</div>
+        </div>
+        <button className="chip" onClick={onClose} aria-label="Close evidence pack">
+          ✕
+        </button>
+      </div>
+      <input className="input" placeholder="filter facts…" value={q} onChange={(e) => setQ(e.target.value)} />
+      <div className="sheet-body">
+        {topics.length === 0 && <p className="empty">no facts match “{q}”</p>}
+        {topics.map((t) => (
+          <section key={t.id} className="pack-topic">
+            <h2 className="pack-title">{t.title}</h2>
+            {t.facts.map((f, i) => (
+              <details key={i} className="pack-fact">
+                <summary>{f.statement}</summary>
+                <blockquote>“{f.quote}”</blockquote>
+                <a href={f.url} target="_blank" rel="noreferrer">
+                  {f.source} ↗
+                </a>
+              </details>
+            ))}
+          </section>
+        ))}
+        <p className="meta" style={{ textAlign: "center", marginTop: 18 }}>
+          built {new Date(pack.builtAt).toLocaleString()}
+        </p>
+      </div>
+    </div>
+  );
+}
+
 function SetupScreen(props: {
   api: Api;
   setup: Setup;
@@ -162,6 +223,7 @@ function SetupScreen(props: {
   const [prepping, setPrepping] = useState(false);
   const [prepError, setPrepError] = useState("");
   const [elapsed, setElapsed] = useState(0);
+  const [showPack, setShowPack] = useState(false);
 
   useEffect(() => {
     if (!prepping) return;
@@ -232,7 +294,13 @@ function SetupScreen(props: {
             <span style={{ color: "var(--ok)" }}>✓ ready</span> · {plural(pack.topics.length, "topic")}, {plural(pack.topics.reduce((n, t) => n + t.facts.length, 0), "fact")}
           </p>
         ) : null}
-        <button className="btn" style={{ width: "100%" }} onClick={prep} disabled={prepping || !setup.topic.trim()}>
+        <div className="row">
+        {packMatches && !prepping && (
+          <button className="btn" onClick={() => setShowPack(true)}>
+            view facts
+          </button>
+        )}
+        <button className="btn" onClick={prep} disabled={prepping || !setup.topic.trim()}>
           {prepping ? (
             <>
               <span className="spinner" /> researching… {elapsed}s
@@ -243,8 +311,11 @@ function SetupScreen(props: {
             "build pack (1–3 min)"
           )}
         </button>
+        </div>
         {prepError && <p className="error">{prepError}</p>}
       </div>
+
+      {showPack && packMatches && <PackSheet pack={pack} onClose={() => setShowPack(false)} />}
 
       <label className="toggle">
         <span>
@@ -283,6 +354,7 @@ function LiveScreen(props: {
   const [typed, setTyped] = useState("");
   const [atBottom, setAtBottom] = useState(true);
   const [elapsed, setElapsed] = useState(0);
+  const [showPack, setShowPack] = useState(false);
   const listener = useRef<Listener | null>(null);
   const barRef = useRef<HTMLDivElement | null>(null);
   const turnsRef = useRef<Turn[]>([]);
@@ -487,6 +559,11 @@ function LiveScreen(props: {
         </span>
         <span className="timer">{formatClock(elapsed)}</span>
         <span className="spacer" />
+        {pack && (
+          <button className="chip" onClick={() => setShowPack(true)} aria-label="Open evidence pack">
+            facts
+          </button>
+        )}
         <button className="chip" aria-pressed={claimsOnly} onClick={() => setClaimsOnly((v) => !v)}>
           claims
         </button>
@@ -495,6 +572,8 @@ function LiveScreen(props: {
         </button>
         <ThemeToggle />
       </header>
+
+      {showPack && pack && <PackSheet pack={pack} onClose={() => setShowPack(false)} />}
 
       {status === "error" && <p className="error">{statusDetail || "Something went wrong with the microphone."}</p>}
 
