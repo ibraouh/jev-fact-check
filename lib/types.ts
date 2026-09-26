@@ -28,9 +28,12 @@ export interface EvidencePack {
 }
 
 export interface CheckRequest {
-  utterance: string;
+  /** One finished sentence, sent while the speaker keeps talking. */
+  sentence: string;
   speaker: string;
   recent: TranscriptLine[];
+  /** Claims this speaker made earlier in the same turn; the sentence may extend one. */
+  openClaims: { id: string; text: string }[];
   debateTopic?: string;
   pack?: EvidencePack | null;
   deepChecks: boolean;
@@ -57,6 +60,8 @@ export type CheckEvent =
   | { type: "no_claim"; claimProbability: number; ms: number }
   | {
       type: "claim";
+      /** "update" re-checks an existing card with the combined claim text. */
+      target: { mode: "new" } | { mode: "update"; claimId: string };
       claim: string;
       kind: ClaimKind;
       claimProbability: number;

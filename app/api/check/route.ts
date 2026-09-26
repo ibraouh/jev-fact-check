@@ -7,8 +7,9 @@ import type { CheckEvent, CheckRequest, Evidence } from "@/lib/types";
 export const maxDuration = 60;
 
 /**
- * The live loop for one finished utterance, streamed as NDJSON so the phone
- * can show "checking…" the moment Jev spots a claim:
+ * The live loop for one finished sentence (sent while the speaker keeps
+ * talking), streamed as NDJSON so the phone can show "checking…" the moment
+ * Jev spots a claim:
  *   Jev (claim?) -> evidence pack or Brave search -> Jev (verdict) -> [Claude, in the background]
  */
 export async function POST(request: Request) {
@@ -16,8 +17,9 @@ export async function POST(request: Request) {
   if (denied) return denied;
 
   const body = (await request.json()) as CheckRequest;
-  const utterance = body.utterance?.trim();
-  if (!utterance) return Response.json({ error: "Empty utterance" }, { status: 400 });
+  const sentence = body.sentence?.trim();
+  if (!sentence) return Response.json({ error: "Empty sentence" }, { status: 400 });
+  body.openClaims ??= [];
 
   const encoder = new TextEncoder();
   const stream = new ReadableStream<Uint8Array>({
@@ -28,14 +30,15 @@ export async function POST(request: Request) {
 
       try {
         // 1. Is there a checkable claim? (Jev)
-        const detection = await detectClaim(body);
+        const detection = await detectClaim({ ...body, sentence });
         const claimMs = since(started);
-        if (!detection.isClaim) {
+        if (detection.target.mode === "none") {
           send({ type: "no_claim", claimProbability: detection.claimProbability, ms: claimMs });
           return;
         }
         send({
           type: "claim",
+          target: detection.target,
           claim: detection.claim,
           kind: detection.kind,
           claimProbability: detection.claimProbability,

@@ -1,17 +1,20 @@
 "use client";
 
-// Streams the phone's mic to Deepgram and turns its results into finished
-// utterances, one per speaker turn.
+// Streams the phone's mic to Deepgram and emits each sentence the moment it is
+// finished, so checks start while the speaker is still talking.
 
-export interface Utterance {
+export interface Sentence {
   speaker: number;
   text: string;
+  /** Increments on every speaker change or pause; sentences in one turn share it. */
+  turn: number;
 }
 
 export interface ListenerCallbacks {
+  /** Words heard in the current turn that don't form a finished sentence yet. */
   onInterim: (speaker: number, text: string) => void;
-  onUtterance: (u: Utterance) => void;
-  onStatus: (status: "connecting" | "live" | "reconnecting" | "stopped" | "error", detail?: string) => void;
+  onSentence: (s: Sentence) => void;
+  onStatus: (status: "connecting" | "live" | "paused" | "reconnecting" | "stopped" | "error", detail?: string) => void;
 }
 
 interface DeepgramWord {
@@ -44,9 +47,28 @@ const DEEPGRAM_URL =
     vad_events: "true",
   }).toString();
 
-/** Group consecutive words by speaker so a turn change splits the utterance. */
-function segments(words: DeepgramWord[]): Utterance[] {
-  const out: Utterance[] = [];
+// "U.S." or "Dr." end in a period but don't end a sentence.
+const ABBREVIATION = /(?:\b(?:[A-Z]\.){2,}|\b(?:Mr|Mrs|Ms|Dr|St|vs|etc|approx|No|Jr|Sr)\.)$/;
+
+/** Splits off every finished sentence; returns them plus the unfinished rest. */
+function takeSentences(text: string): { done: string[]; rest: string } {
+  const done: string[] = [];
+  let start = 0;
+  const re = /[.!?]+(?=\s|$)/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text))) {
+    const end = m.index + m[0].length;
+    const candidate = text.slice(start, end).trim();
+    if (ABBREVIATION.test(candidate)) continue;
+    if (candidate) done.push(candidate);
+    start = end;
+  }
+  return { done, rest: text.slice(start).trim() };
+}
+
+/** Group consecutive words by speaker so a turn change splits the text. */
+function segments(words: DeepgramWord[]): { speaker: number; text: string }[] {
+  const out: { speaker: number; text: string }[] = [];
   for (const w of words) {
     const speaker = w.speaker ?? 0;
     const text = w.punctuated_word ?? w.word;
@@ -63,8 +85,11 @@ export class Listener {
   private stream: MediaStream | null = null;
   private node: AudioWorkletNode | null = null;
   private keepAlive: ReturnType<typeof setInterval> | null = null;
-  private pending: Utterance | null = null;
+  // Finalized words of the current turn that haven't completed a sentence yet.
+  private pending: { speaker: number; text: string } | null = null;
+  private turn = 0;
   private stopped = false;
+  private paused = false;
 
   constructor(
     private getToken: () => Promise<string>,
@@ -93,7 +118,7 @@ export class Listener {
     const source = this.ctx.createMediaStreamSource(this.stream);
     this.node = new AudioWorkletNode(this.ctx, "pcm-worklet");
     this.node.port.onmessage = (e: MessageEvent<ArrayBuffer>) => {
-      if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(e.data);
+      if (!this.paused && this.ws?.readyState === WebSocket.OPEN) this.ws.send(e.data);
     };
     source.connect(this.node);
     await this.connect();
@@ -107,7 +132,7 @@ export class Listener {
     this.ws = ws;
 
     ws.onopen = () => {
-      this.cb.onStatus("live");
+      this.cb.onStatus(this.paused ? "paused" : "live");
       this.keepAlive = setInterval(() => {
         if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "KeepAlive" }));
       }, 8000);
@@ -116,7 +141,7 @@ export class Listener {
     ws.onerror = () => this.cb.onStatus("error", "Connection to Deepgram failed");
     ws.onclose = () => {
       if (this.keepAlive) clearInterval(this.keepAlive);
-      this.flush();
+      this.endTurn();
       if (!this.stopped) {
         // Mobile networks drop sockets; reconnect with a fresh token.
         this.cb.onStatus("reconnecting");
@@ -127,10 +152,10 @@ export class Listener {
 
   private handle(msg: DeepgramResults | { type: string }) {
     if (msg.type === "UtteranceEnd") {
-      this.flush();
+      this.endTurn();
       return;
     }
-    if (msg.type !== "Results") return;
+    if (msg.type !== "Results" || this.paused) return;
     const r = msg as DeepgramResults;
     const alt = r.channel.alternatives[0];
     if (!alt || !alt.transcript) return;
@@ -138,23 +163,47 @@ export class Listener {
     const segs = segments(alt.words);
     if (!r.is_final) {
       const last = segs[segs.length - 1];
-      if (last) this.cb.onInterim(last.speaker, (this.pending?.speaker === last.speaker ? this.pending.text + " " : "") + last.text);
+      if (last) {
+        const before = this.pending?.speaker === last.speaker ? this.pending.text + " " : "";
+        this.cb.onInterim(last.speaker, before + last.text);
+      }
       return;
     }
 
     for (const seg of segs) {
-      if (this.pending && this.pending.speaker !== seg.speaker) this.flush();
-      this.pending = this.pending ? { speaker: seg.speaker, text: this.pending.text + " " + seg.text } : { ...seg };
+      if (this.pending && this.pending.speaker !== seg.speaker) this.endTurn();
+      const text = this.pending ? `${this.pending.text} ${seg.text}` : seg.text;
+      // Emit every finished sentence right away; keep the unfinished tail.
+      const { done, rest } = takeSentences(text);
+      for (const sentence of done) this.cb.onSentence({ speaker: seg.speaker, text: sentence, turn: this.turn });
+      this.pending = { speaker: seg.speaker, text: rest };
     }
     this.cb.onInterim(this.pending?.speaker ?? 0, this.pending?.text ?? "");
-    // Check long monologues sentence by sentence instead of waiting for a pause.
-    const longTurn = (this.pending?.text.split(" ").length ?? 0) > 45 && /[.!?]$/.test(this.pending?.text ?? "");
-    if (r.speech_final || longTurn) this.flush();
+    if (r.speech_final) this.endTurn();
   }
 
-  private flush() {
-    if (this.pending && this.pending.text.trim()) this.cb.onUtterance(this.pending);
+  /** A pause or speaker change: send any unfinished words as a last sentence. */
+  private endTurn() {
+    if (this.pending?.text.trim()) {
+      this.cb.onSentence({ speaker: this.pending.speaker, text: this.pending.text.trim(), turn: this.turn });
+    }
+    if (this.pending) this.turn++;
     this.pending = null;
+    this.cb.onInterim(0, "");
+  }
+
+  /** Stops sending audio but keeps the connection (and the screen) as they are. */
+  pause() {
+    this.endTurn();
+    this.paused = true;
+    this.stream?.getAudioTracks().forEach((t) => (t.enabled = false));
+    this.cb.onStatus("paused");
+  }
+
+  resume() {
+    this.paused = false;
+    this.stream?.getAudioTracks().forEach((t) => (t.enabled = true));
+    this.cb.onStatus(this.ws?.readyState === WebSocket.OPEN ? "live" : "reconnecting");
   }
 
   async stop() {
@@ -165,7 +214,7 @@ export class Listener {
     this.node?.disconnect();
     this.stream?.getTracks().forEach((t) => t.stop());
     await this.ctx?.close().catch(() => {});
-    this.flush();
+    this.endTurn();
     this.cb.onStatus("stopped");
   }
 }

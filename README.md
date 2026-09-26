@@ -4,9 +4,10 @@ A phone web app that listens to a live debate and fact-checks claims as they're 
 
 ```
 mic ──► Deepgram (live transcript + who's speaking)
-          │ each finished turn
+          │ each finished sentence, while the speaker keeps talking
           ▼
-        Jev: is there a checkable claim? which sentence? what kind? which prep topic?   (~150 ms)
+        Jev: is there a checkable claim? does it add to a claim from earlier in this turn?
+             what kind? which prep topic?                                                 (~150 ms)
           │ yes
           ▼
         evidence: Claude's pre-built evidence pack ── or ── Brave live search
@@ -16,7 +17,8 @@ mic ──► Deepgram (live transcript + who's speaking)
         card on screen  ──►  Claude double-checks numbers and unsure claims in the background
 ```
 
-There is no LLM in the live path. Claude works **before** the debate (building the evidence pack) and in
+If a sentence adds to an earlier claim ("…and that was in 2023"), that card is re-checked with the
+combined claim instead of getting a new card. There is no LLM in the live path. Claude works **before** the debate (building the evidence pack) and in
 the **background** (second opinions). Jev makes every per-sentence decision. A verdict is only shown when
 Jev is confident *and* a cited passage backs it; otherwise the card shows the evidence and says "Unclear".
 

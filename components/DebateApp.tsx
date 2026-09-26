@@ -1,31 +1,30 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Listener } from "@/lib/listener";
 import type { CheckEvent, CitedEvidence, EvidencePack, TranscriptLine, Verdict } from "@/lib/types";
 
-type LineStatus = "checking" | "no_claim" | "claim" | "done" | "error";
-
-interface Line {
-  id: number;
+/** One speaker turn: sentences arrive one by one while they talk. */
+interface Turn {
+  key: string;
   speaker: number;
+  sentences: string[];
+  claims: Claim[];
+  error?: string;
+}
+
+/** A claim card. Later sentences can extend it; each re-check bumps the version. */
+interface Claim {
+  id: string;
   text: string;
-  status: LineStatus;
-  claim?: string;
-  packTopic?: string | null;
+  version: number;
+  status: "checking" | "done" | "error";
+  updated?: boolean;
   verdict?: Extract<CheckEvent, { type: "verdict" }>;
   deep?: Extract<CheckEvent, { type: "deep" }>;
   deepPending?: boolean;
   error?: string;
 }
-
-const LABELS: Record<Verdict | "unclear", string> = {
-  supported: "Supported",
-  contradicted: "False",
-  misleading: "Misleading",
-  unverified: "Unverified",
-  unclear: "Unclear",
-};
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
@@ -242,81 +241,121 @@ function LiveScreen(props: {
 }) {
   const { api, setup } = props;
   const pack = props.pack && props.pack.topic === setup.topic.trim() ? props.pack : null;
-  const [lines, setLines] = useState<Line[]>([]);
+  const [turns, setTurns] = useState<Turn[]>([]);
   const [interim, setInterim] = useState<{ speaker: number; text: string } | null>(null);
-  const [status, setStatus] = useState<string>("idle");
+  const [status, setStatus] = useState<string>("connecting");
   const [statusDetail, setStatusDetail] = useState("");
   const [claimsOnly, setClaimsOnly] = useState(false);
   const [swapped, setSwapped] = useState(false);
   const [typed, setTyped] = useState("");
   const [atBottom, setAtBottom] = useState(true);
   const listener = useRef<Listener | null>(null);
-  const linesRef = useRef<Line[]>([]);
-  const nextId = useRef(0);
-  linesRef.current = lines;
+  const turnsRef = useRef<Turn[]>([]);
+  const counter = useRef(0);
+  turnsRef.current = turns;
 
   const names = [setup.nameA || "Speaker 1", setup.nameB || "Speaker 2"];
-  const nameOf = useCallback(
-    (speaker: number) => {
-      const i = speaker < 2 && swapped ? 1 - speaker : speaker;
-      return names[i] ?? `Speaker ${i + 1}`;
-    },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [swapped, setup.nameA, setup.nameB],
-  );
+  const nameOf = (speaker: number) => {
+    const i = speaker < 2 && swapped ? 1 - speaker : speaker;
+    return names[i] ?? `Speaker ${i + 1}`;
+  };
+  const nameRef = useRef(nameOf);
+  nameRef.current = nameOf;
 
-  const update = (id: number, patch: Partial<Line>) =>
-    setLines((ls) => ls.map((l) => (l.id === id ? { ...l, ...patch } : l)));
+  const patchClaim = (turnKey: string, claimId: string, patch: (c: Claim) => Claim | null) =>
+    setTurns((ts) =>
+      ts.map((t) => {
+        if (t.key !== turnKey) return t;
+        return { ...t, claims: t.claims.map((c) => (c.id === claimId ? (patch(c) ?? c) : c)) };
+      }),
+    );
 
-  const check = useCallback(
-    async (speaker: number, text: string) => {
-      const id = nextId.current++;
-      const recent: TranscriptLine[] = linesRef.current.slice(-6).map((l) => ({ speaker: nameOf(l.speaker), text: l.text }));
-      setLines((ls) => [...ls, { id, speaker, text, status: "checking" }]);
+  /** Check one finished sentence. Runs while the speaker keeps talking. */
+  const check = async (turnKey: string, speaker: number, sentence: string) => {
+    const all = turnsRef.current;
+    const turn = all.find((t) => t.key === turnKey);
+    const recent: TranscriptLine[] = all
+      .flatMap((t) => t.sentences.map((s) => ({ speaker: nameRef.current(t.speaker), text: s })))
+      .slice(-7, -1);
+    const openClaims = (turn?.claims ?? []).map((c) => ({ id: c.id, text: c.text }));
 
-      try {
-        const res = await api("/api/check", {
-          utterance: text,
-          speaker: nameOf(speaker),
-          recent,
-          debateTopic: setup.topic,
-          pack,
-          deepChecks: setup.deepChecks,
-        });
-        if (!res.ok || !res.body) throw new Error(((await res.json()) as { error: string }).error);
+    // The card this request owns, and which version of it. A later sentence can
+    // extend the claim and re-check it; stale answers for older versions are dropped.
+    let owned: { id: string; version: number } | null = null;
+    const apply = (patch: (c: Claim) => Partial<Claim>) => {
+      const o = owned;
+      if (!o) return;
+      patchClaim(turnKey, o.id, (c) => (c.version === o.version ? { ...c, ...patch(c) } : null));
+    };
 
-        // Read the NDJSON stream: each stage updates the card as it lands.
-        const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
-        let buffer = "";
-        for (;;) {
-          const { value, done } = await reader.read();
-          if (done) break;
-          buffer += value;
-          const parts = buffer.split("\n");
-          buffer = parts.pop() ?? "";
-          for (const part of parts) {
-            if (!part.trim()) continue;
-            const ev = JSON.parse(part) as CheckEvent;
-            if (ev.type === "no_claim") update(id, { status: "no_claim" });
-            else if (ev.type === "claim") update(id, { status: "claim", claim: ev.claim, packTopic: ev.packTopic });
-            else if (ev.type === "verdict") update(id, { status: "done", verdict: ev, deepPending: ev.deepPending });
-            else if (ev.type === "deep") update(id, { deep: ev, deepPending: false });
-            else if (ev.type === "error") update(id, { status: "error", error: ev.message, deepPending: false });
+    try {
+      const res = await api("/api/check", {
+        sentence,
+        speaker: nameRef.current(speaker),
+        recent,
+        openClaims,
+        debateTopic: setup.topic,
+        pack,
+        deepChecks: setup.deepChecks,
+      });
+      if (!res.ok || !res.body) throw new Error(((await res.json()) as { error: string }).error);
+
+      const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+      let buffer = "";
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += value;
+        const parts = buffer.split("\n");
+        buffer = parts.pop() ?? "";
+        for (const part of parts) {
+          if (!part.trim()) continue;
+          const ev = JSON.parse(part) as CheckEvent;
+          if (ev.type === "claim") {
+            if (ev.target.mode === "update") {
+              const id = ev.target.claimId;
+              const current = turnsRef.current.find((t) => t.key === turnKey)?.claims.find((c) => c.id === id);
+              const version = (current?.version ?? 0) + 1;
+              owned = { id, version };
+              patchClaim(turnKey, id, () => ({ id, text: ev.claim, version, status: "checking", updated: true }));
+            } else {
+              const id = `c${counter.current++}`;
+              owned = { id, version: 1 };
+              const claim: Claim = { id, text: ev.claim, version: 1, status: "checking" };
+              setTurns((ts) => ts.map((t) => (t.key === turnKey ? { ...t, claims: [...t.claims, claim] } : t)));
+            }
+          } else if (ev.type === "verdict") apply(() => ({ status: "done", verdict: ev, deepPending: ev.deepPending }));
+          else if (ev.type === "deep") apply(() => ({ deep: ev, deepPending: false }));
+          else if (ev.type === "error") {
+            if (owned) apply(() => ({ status: "error", error: ev.message, deepPending: false }));
+            else setTurns((ts) => ts.map((t) => (t.key === turnKey ? { ...t, error: ev.message } : t)));
           }
         }
-        update(id, { deepPending: false });
-      } catch (err) {
-        update(id, { status: "error", error: err instanceof Error ? err.message : String(err) });
       }
-    },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [api, nameOf, pack, setup.topic, setup.deepChecks],
-  );
-
+      apply(() => ({ deepPending: false }));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (owned) apply(() => ({ status: "error", error: message, deepPending: false }));
+      else setTurns((ts) => ts.map((t) => (t.key === turnKey ? { ...t, error: message } : t)));
+    }
+  };
   const checkRef = useRef(check);
   checkRef.current = check;
 
-  // Start the mic. The tap on "Start listening" counts as the user gesture iOS requires.
+  /** Add a finished sentence to its turn (creating the turn if new) and check it. */
+  const addSentence = (turnKey: string, speaker: number, text: string) => {
+    const exists = turnsRef.current.some((t) => t.key === turnKey);
+    const next = exists
+      ? turnsRef.current.map((t) => (t.key === turnKey ? { ...t, sentences: [...t.sentences, text] } : t))
+      : [...turnsRef.current, { key: turnKey, speaker, sentences: [text], claims: [] }];
+    turnsRef.current = next; // so the check below sees this turn immediately
+    setTurns(next);
+    void checkRef.current(turnKey, speaker, text);
+  };
+  const addRef = useRef(addSentence);
+  addRef.current = addSentence;
+
+  // Start the mic. The tap on "Start listening" already unlocked audio for iOS.
   useEffect(() => {
     const l = new Listener(
       async () => {
@@ -327,10 +366,7 @@ function LiveScreen(props: {
       },
       {
         onInterim: (speaker, text) => setInterim(text ? { speaker, text } : null),
-        onUtterance: (u) => {
-          setInterim(null);
-          void checkRef.current(u.speaker, u.text);
-        },
+        onSentence: (s) => addRef.current(`m${s.turn}`, s.speaker, s.text),
         onStatus: (s, detail) => {
           setStatus(s);
           setStatusDetail(detail ?? "");
@@ -364,7 +400,7 @@ function LiveScreen(props: {
     };
   }, []);
 
-  // Follow new lines unless the user scrolled up to read something.
+  // Follow new text unless the user scrolled up to read something.
   useEffect(() => {
     const onScroll = () => setAtBottom(window.innerHeight + window.scrollY >= document.body.scrollHeight - 80);
     window.addEventListener("scroll", onScroll, { passive: true });
@@ -372,17 +408,22 @@ function LiveScreen(props: {
   }, []);
   useEffect(() => {
     if (atBottom) window.scrollTo({ top: document.body.scrollHeight });
-  }, [lines, interim, atBottom]);
+  }, [turns, interim, atBottom]);
 
-  const stop = async () => {
+  const paused = status === "paused";
+  const ended = status === "stopped";
+  const togglePause = () => (paused ? listener.current?.resume() : listener.current?.pause());
+  const end = async () => {
     await listener.current?.stop();
-    props.onExit();
+    setInterim(null);
   };
 
-  const visible = claimsOnly ? lines.filter((l) => l.status !== "no_claim") : lines;
-  const dotClass = status === "live" ? "dot live" : status === "reconnecting" || status === "connecting" ? "dot warn" : "dot";
+  const visible = claimsOnly ? turns.filter((t) => t.claims.length > 0) : turns;
+  const dotClass =
+    status === "live" ? "dot live" : status === "reconnecting" || status === "connecting" || paused ? "dot warn" : "dot";
   const statusText =
-    status === "live" ? "Listening" : status === "connecting" ? "Connecting…" : status === "reconnecting" ? "Reconnecting…" : status === "error" ? "Mic error" : "Stopped";
+    ({ live: "Listening", connecting: "Connecting…", reconnecting: "Reconnecting…", paused: "Paused", error: "Mic error", stopped: "Ended" } as Record<string, string>)[status] ??
+    status;
 
   return (
     <div className="screen">
@@ -404,11 +445,11 @@ function LiveScreen(props: {
       <main className="feed" aria-live="polite">
         {visible.length === 0 && !interim && (
           <p className="hint" style={{ textAlign: "center", marginTop: 40 }}>
-            Start talking. Factual claims will get a card{pack ? " (evidence pack loaded)" : ""}.
+            Start talking. Each factual claim gets a card as soon as the sentence ends{pack ? " (evidence pack loaded)" : ""}.
           </p>
         )}
-        {visible.map((l) => (
-          <LineView key={l.id} line={l} name={nameOf(l.speaker)} />
+        {visible.map((t) => (
+          <TurnView key={t.key} turn={t} name={nameOf(t.speaker)} />
         ))}
         {interim && (
           <div className="line interim">
@@ -431,7 +472,8 @@ function LiveScreen(props: {
           className="composer"
           onSubmit={(e) => {
             e.preventDefault();
-            if (typed.trim()) void check(0, typed.trim());
+            const text = typed.trim();
+            if (text) addSentence(`t${counter.current++}`, 0, text);
             setTyped("");
           }}
         >
@@ -441,100 +483,144 @@ function LiveScreen(props: {
           </button>
         </form>
         <div className="bottom-bar-inner">
-          <button className="btn btn-danger btn-big" onClick={stop}>
-            ■ Stop
-          </button>
+          {ended ? (
+            <button className="btn btn-primary btn-big" onClick={props.onExit}>
+              New debate
+            </button>
+          ) : (
+            <>
+              <button className="btn btn-big" onClick={togglePause} disabled={status === "error" || status === "connecting"}>
+                {paused ? "▶ Resume" : "❚❚ Pause"}
+              </button>
+              <button className="btn btn-danger btn-big" onClick={end}>
+                ■ End
+              </button>
+            </>
+          )}
         </div>
       </div>
     </div>
   );
 }
 
-function LineView({ line, name }: { line: Line; name: string }) {
-  const showCard = line.status !== "no_claim";
+function TurnView({ turn, name }: { turn: Turn; name: string }) {
   return (
-    <div className={`line ${line.status === "no_claim" ? "dim" : ""}`}>
-      <span className="speaker" style={{ color: `var(--speaker-${line.speaker % 3})` }}>
+    <div className={`line ${turn.claims.length === 0 ? "dim" : ""}`}>
+      <span className="speaker" style={{ color: `var(--speaker-${turn.speaker % 3})` }}>
         {name}
       </span>
-      <span className="line-text">{line.text}</span>
-      {showCard && <VerdictCard line={line} />}
+      <span className="line-text">{turn.sentences.join(" ")}</span>
+      {turn.claims.map((c) => (
+        <ClaimCard key={c.id} claim={c} />
+      ))}
+      {turn.error && <p className="meta">Couldn't check: {turn.error}</p>}
     </div>
   );
 }
 
-function VerdictCard({ line }: { line: Line }) {
-  if (line.status === "checking") {
-    return null; // Most lines have no claim; don't flash a card until Jev finds one.
-  }
-  if (line.status === "error") {
-    return <p className="meta">Couldn't check: {line.error}</p>;
-  }
-  if (line.status === "claim") {
+const VERDICT_UI: Record<Verdict | "unclear" | "checking", { label: string; icon: string; cls: string }> = {
+  supported: { label: "TRUE", icon: "✓", cls: "supported" },
+  contradicted: { label: "FALSE", icon: "✗", cls: "contradicted" },
+  misleading: { label: "MISLEADING", icon: "!", cls: "misleading" },
+  unverified: { label: "UNVERIFIED", icon: "?", cls: "unclear" },
+  unclear: { label: "UNCLEAR", icon: "?", cls: "unclear" },
+  checking: { label: "CHECKING", icon: "", cls: "checking" },
+};
+
+function ClaimCard({ claim }: { claim: Claim }) {
+  if (claim.status === "error") {
     return (
-      <div className="verdict-card checking">
-        <span className="badge checking">
-          <span className="spinner" /> Checking
-        </span>
-        <span className="claim-text">“{line.claim}”</span>
+      <div className="verdict-card unclear">
+        <span className="claim-text">“{claim.text}”</span>
+        <span className="meta">Couldn't check: {claim.error}</span>
       </div>
     );
   }
 
-  const v = line.verdict!;
-  const shown: Verdict | "unclear" = v.confident ? v.verdict : "unclear";
-  const deepVerdict = line.deep?.verdict;
-  const t = v.timings;
+  const v = claim.verdict;
+  const deep = claim.deep;
+  // The banner shows the best answer available: Jev when it's confident, else
+  // Claude's second opinion, else "checking" while Claude works, else "unclear".
+  let shown: keyof typeof VERDICT_UI = "checking";
+  let by = "";
+  if (claim.status === "done" && v) {
+    if (v.confident) {
+      shown = v.verdict;
+      by = `Jev · ${Math.round(v.confidence * 100)}%`;
+    } else if (deep) {
+      shown = deep.verdict === "unverified" ? "unclear" : deep.verdict;
+      by = "Claude";
+    } else if (!claim.deepPending) {
+      shown = "unclear";
+    }
+  }
+  const ui = VERDICT_UI[shown];
+  const disagrees = v?.confident && deep && deep.verdict !== v.verdict;
 
   return (
-    <div className={`verdict-card ${deepVerdict && !v.confident ? deepVerdict : shown}`}>
-      <span className={`badge ${shown}`}>
-        {LABELS[shown]}
-        {v.confident && <span style={{ fontWeight: 500 }}>{Math.round(v.confidence * 100)}%</span>}
+    <div className={`verdict-card ${ui.cls}`}>
+      <div className="verdict-banner">
+        {shown === "checking" ? <span className="spinner big" /> : <span className="verdict-icon">{ui.icon}</span>}
+        <span className="verdict-label">{ui.label}</span>
+        {by && <span className="verdict-by">{by}</span>}
+      </div>
+      <span className="claim-text">
+        “{claim.text}”{claim.updated && <span className="updated"> · updated</span>}
       </span>
-      <span className="claim-text">“{line.claim}”</span>
-      {v.cited.slice(0, 2).map((c) => (
-        <Source key={c.id} c={c} />
-      ))}
-      {!v.confident && v.cited.length === 0 && <span className="hint">No clear evidence found yet.</span>}
-      {line.deepPending && (
-        <div className="deep hint" style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span className="spinner" /> Claude is double-checking…
-        </div>
+
+      {v?.cited.slice(0, 3).map((c) => <SourceRow key={c.id} c={c} />)}
+      {v && !v.confident && v.cited.length === 0 && !deep && !claim.deepPending && (
+        <span className="hint">No clear evidence found.</span>
       )}
-      {line.deep && (
-        <div className="deep">
-          <span className={`badge ${line.deep.verdict}`}>Claude: {LABELS[line.deep.verdict]}</span>
-          <p style={{ margin: "6px 0 4px" }}>{line.deep.explanation}</p>
-          {line.deep.sources.slice(0, 2).map((s) => (
-            <div key={s.url} className="meta">
-              <a href={s.url} target="_blank" rel="noreferrer">
-                {s.title}
-              </a>
-            </div>
-          ))}
-          <div className="meta">Claude {(line.deep.ms / 1000).toFixed(1)}s</div>
-        </div>
+
+      {deep && (
+        <details className="src">
+          <summary>
+            <span className={`rel ${deep.verdict}`}>Claude</span> {deep.explanation}
+          </summary>
+          <div className="src-body">
+            {disagrees && <p style={{ margin: "0 0 6px" }}>Claude disagrees with Jev: {VERDICT_UI[deep.verdict].label}.</p>}
+            <p style={{ margin: "0 0 6px" }}>{deep.explanation}</p>
+            {deep.sources.slice(0, 3).map((s) => (
+              <div key={s.url}>
+                <a href={s.url} target="_blank" rel="noreferrer">
+                  {s.title} ↗
+                </a>
+              </div>
+            ))}
+            <div className="meta">Claude {(deep.ms / 1000).toFixed(1)}s</div>
+          </div>
+        </details>
       )}
-      <span className="meta">
-        {v.path === "pack" ? "Evidence pack" : "Live search"} · Jev {t.claimMs}ms · {v.path === "pack" ? "pack" : "search"} {t.evidenceMs}ms · Jev{" "}
-        {t.verdictMs}ms · <strong>{t.totalMs}ms</strong>
-      </span>
+      {claim.deepPending && v?.confident && (
+        <span className="meta" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <span className="spinner" /> Claude double-checking…
+        </span>
+      )}
+      {v && (
+        <span className="meta">
+          {v.path === "pack" ? "Evidence pack" : "Live search"} · {v.timings.totalMs}ms (Jev {v.timings.claimMs} · evidence {v.timings.evidenceMs} · Jev{" "}
+          {v.timings.verdictMs})
+        </span>
+      )}
     </div>
   );
 }
 
-function Source({ c }: { c: CitedEvidence }) {
+/** One line per source; tap to expand the passage and link. */
+function SourceRow({ c }: { c: CitedEvidence }) {
   return (
-    <div className="source">
-      <span style={{ color: c.relation === "supports" ? "var(--ok)" : "var(--bad)", fontWeight: 700 }}>
-        {c.relation === "supports" ? "Supports" : "Contradicts"}
-      </span>{" "}
-      ·{" "}
-      <a href={c.url} target="_blank" rel="noreferrer">
-        {c.source}
-      </a>
-      <div style={{ marginTop: 4 }}>{c.text.length > 260 ? c.text.slice(0, 260) + "…" : c.text}</div>
-    </div>
+    <details className="src">
+      <summary>
+        <span className={`rel ${c.relation === "supports" ? "supported" : "contradicted"}`}>{c.relation === "supports" ? "✓" : "✗"}</span>{" "}
+        <strong>{c.source}</strong> — {c.text}
+      </summary>
+      <div className="src-body">
+        <p style={{ margin: "0 0 6px" }}>{c.text}</p>
+        <a href={c.url} target="_blank" rel="noreferrer">
+          Open source ↗
+        </a>
+      </div>
+    </details>
   );
 }
