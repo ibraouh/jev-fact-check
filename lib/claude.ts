@@ -1,5 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
-import type { Evidence, EvidencePack, PackTopic, TranscriptLine, Verdict } from "./types";
+import type { Evidence, EvidencePack, PackTopic, Rating, TranscriptLine } from "./types";
 
 const MODEL = "claude-opus-5";
 
@@ -125,9 +125,12 @@ const VERDICT_TOOL: Anthropic.Beta.BetaTool = {
   input_schema: {
     type: "object",
     additionalProperties: false,
-    required: ["verdict", "explanation", "sources"],
+    required: ["rating", "explanation", "sources"],
     properties: {
-      verdict: { type: "string", enum: ["supported", "contradicted", "misleading", "unverified"] },
+      rating: {
+        type: "string",
+        enum: ["true", "mostly_true", "half_true", "mostly_false", "false", "misleading", "no_evidence"],
+      },
       explanation: { type: "string" },
       sources: {
         type: "array",
@@ -149,7 +152,7 @@ export async function deepCheck(input: {
   recent: TranscriptLine[];
   /** Passages Jev already judged, so Claude can often answer without searching. */
   evidence: Evidence[];
-}): Promise<{ verdict: Verdict; explanation: string; sources: { title: string; url: string }[] }> {
+}): Promise<{ rating: Rating; explanation: string; sources: { title: string; url: string }[] }> {
   const context = input.recent.map((l) => `${l.speaker}: ${l.text}`).join("\n");
   const passages = input.evidence
     .slice(0, 8)
@@ -167,7 +170,10 @@ Passages already retrieved for this claim:
 ${passages || "(none)"}
 
 Decide from these passages if they are enough. Only use web search (one or two searches at most) if they don't settle the claim; speed matters because this is shown live. Then call report_verdict with:
-- verdict: supported, contradicted, misleading (partly true, exaggerated, or missing key context), or unverified
+- rating, on the PolitiFact scale:
+  true (accurate, nothing significant missing), mostly_true (needs a minor clarification),
+  half_true (partly accurate, leaves out important details), mostly_false (a grain of truth but substantially wrong),
+  false (wrong), misleading (literally accurate but creates a false impression), or no_evidence (can't be determined)
 - explanation: at most two short sentences a debater could glance at, including the correct figure if the claim's number is wrong
 - sources: the 1-3 pages you relied on`,
     tool: VERDICT_TOOL,

@@ -554,3 +554,42 @@ a {
     animation: none;
   }
 }
+
+/* Truth meter: Jev's probability-weighted position on the false-to-true scale. */
+.meter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.meter-track {
+  position: relative;
+  flex: 1;
+  height: 6px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--bad), var(--warn) 50%, var(--ok));
+  opacity: 0.85;
+}
+
+.meter-mark {
+  position: absolute;
+  top: 50%;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--surface);
+  border: 3px solid var(--text);
+  transform: translate(-50%, -50%);
+}
+
+.meter-value {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.rel.unclear {
+  color: var(--neutral);
+}

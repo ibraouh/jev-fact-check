@@ -65,24 +65,32 @@ export async function POST(request: Request) {
           }));
           judgment = await judgeClaim({ ...body, claim: detection.claim, evidence });
         }
-        if (!judgment || judgment.verdict === "unverified") {
-          path = "search";
-          evidence = await searchEvidence(detection.claim);
-          verdictStart = performance.now();
-          judgment = await judgeClaim({ ...body, claim: detection.claim, evidence });
+        // A pack that can't settle the claim firmly falls through to one live search.
+        if (!judgment || !judgment.firm) {
+          try {
+            const found = await searchEvidence(detection.claim);
+            verdictStart = performance.now();
+            const fromSearch = await judgeClaim({ ...body, claim: detection.claim, evidence: found });
+            path = "search";
+            evidence = found;
+            judgment = fromSearch;
+          } catch (err) {
+            // If search fails but the pack gave an answer, show that instead of an error.
+            if (!judgment) throw err;
+          }
         }
         const evidenceMs = Math.round(verdictStart - evidenceStart);
 
         // 4. Claude re-checks numbers and anything Jev wasn't sure about.
         const needsDeep =
           body.deepChecks &&
-          (detection.kind === "statistic" || !judgment.confident || judgment.verdict === "misleading");
+          (detection.kind === "statistic" || !judgment.firm || judgment.rating === "misleading");
 
         send({
           type: "verdict",
-          verdict: judgment.verdict,
-          confidence: judgment.confidence,
-          confident: judgment.confident,
+          rating: judgment.rating,
+          truth: judgment.truth,
+          firm: judgment.firm,
           cited: judgment.cited,
           evidenceCount: evidence.length,
           path,

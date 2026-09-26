@@ -1,5 +1,5 @@
-import { choice, noul, TypeSafeClient } from "@typesafe-ai/sdk";
-import type { ClaimKind, Evidence, EvidencePack, TranscriptLine, Verdict } from "./types";
+import { choice, noul, score, TypeSafeClient } from "@typesafe-ai/sdk";
+import type { ClaimKind, Evidence, EvidencePack, Rating, TranscriptLine } from "./types";
 
 // Pin the version so tuned thresholds don't drift when the alias moves.
 const MODEL = process.env.TYPESAFE_MODEL ?? "jev-1.13.0";
@@ -10,7 +10,9 @@ export const THRESHOLDS = {
   claimMin: 0.6, // is_claim above this -> the sentence gets checked
   packTopicMin: 0.6, // pack topic probability above this -> skip live search
   continuesMin: 0.6, // a sentence this likely to extend an earlier claim re-checks that claim
-  verdictConfidenceMin: 0.75, // below this the card shows evidence, not a verdict
+  firmMin: 0.7, // truth-scale mass on one side needed for a firm rating; below it the card says "leaning"
+  hasEvidenceMin: 0.5, // below this (and nothing citable) the rating is "no evidence"
+  misleadingMin: 0.6, // misleading probability that overrides a true-ish rating
   citeMin: 0.6, // a passage must support/contradict at least this strongly to be cited
 };
 
@@ -128,15 +130,28 @@ export async function detectClaim(input: {
 }
 
 export interface Judgment {
-  verdict: Verdict;
-  confidence: number;
-  confident: boolean;
+  rating: Rating;
+  /** Probability-weighted position on the truth scale, 0 (false) to 1 (true). */
+  truth: number;
+  /** False for "leaning" ratings, where Jev's probability is spread across the scale. */
+  firm: boolean;
   cited: (Evidence & { relation: "supports" | "contradicts"; probability: number })[];
 }
 
+// Ordered truth levels, PolitiFact style. Each level describes a concrete situation.
+const TRUTH_LEVELS = [
+  "False: the passages show the claim is wrong",
+  "Mostly false: the claim contains a grain of truth, but the passages show it is substantially wrong or greatly exaggerated",
+  "Half true: the passages show the claim is partly accurate but leaves out important details or mixes accurate and inaccurate parts",
+  "Mostly true: the passages confirm the claim, but it needs a minor clarification or a figure is slightly off",
+  "True: the passages confirm the claim is accurate, with nothing significant missing",
+] as const;
+
 /**
- * One Jev request judges every passage against the claim, plus an overall
- * verdict across all of them. Code decides what is solid enough to show.
+ * One Jev request judges the claim on a five-level truth scale, checks
+ * separately whether the evidence is relevant at all and whether the claim is
+ * misleading, and rates every passage for citing. Code turns the
+ * probabilities into a rating.
  */
 export async function judgeClaim(input: {
   claim: string;
@@ -145,7 +160,7 @@ export async function judgeClaim(input: {
   evidence: Evidence[];
 }): Promise<Judgment> {
   if (input.evidence.length === 0) {
-    return { verdict: "unverified", confidence: 0, confident: false, cited: [] };
+    return { rating: "no_evidence", truth: 0.5, firm: false, cited: [] };
   }
 
   const evidence = input.evidence.map((e) => ({ id: e.id, source: e.source, text: e.text.slice(0, 1000) }));
@@ -164,15 +179,19 @@ export async function judgeClaim(input: {
   };
 
   const questions = {
-    overall: choice(
-      "Based only on the passages in `evidence`, what is the status of the claim in `claim`? Use `recent_transcript` only to understand what the claim refers to.",
+    truth: score(
+      "Based only on the passages in `evidence`, how accurate is the claim in `claim`? Use `recent_transcript` only to understand what the claim refers to.",
+      TRUTH_LEVELS,
+    ),
+    has_evidence: noul(
+      "Do the passages in `evidence` contain information that directly shows whether the claim in `claim` is accurate?",
       {
-        supported: "At least one passage clearly confirms the claim and none refute it",
-        contradicted: "At least one passage clearly shows the claim is false or substantially wrong",
-        misleading:
-          "The passages show the claim is partly true, exaggerated, or technically accurate but missing important context",
-        unverified: "The passages do not contain enough information to confirm or refute the claim",
+        true: "At least one passage directly addresses the specific fact, figure, or event in the claim",
+        false: "The passages are only loosely related to the topic and don't address the specific claim",
       },
+    ),
+    misleading: noul(
+      "According to the passages in `evidence`, would the claim in `claim` leave a listener with a false impression even if its literal wording is accurate, for example through a cherry-picked time window, a misleading comparison, or missing context that reverses its meaning?",
     ),
     ...Object.fromEntries(
       evidence.map((e, i) => [
@@ -183,13 +202,11 @@ export async function judgeClaim(input: {
   };
 
   const res = await jev().systemOne({ state, questions });
-  const answers = res.answers as Record<string, { choice: string; confidence: number; probabilities: Record<string, number> }>;
-  const overall = answers.overall;
-  const verdict = overall.choice as Verdict;
+  const a = res.answers as unknown as Record<string, { score: number; noul: number; probabilities: Record<string, number> }>;
 
   const cited = input.evidence
     .map((e, i) => {
-      const p = answers[`rel_${i}`].probabilities;
+      const p = a[`rel_${i}`].probabilities;
       const relation: "supports" | "contradicts" = p.contradicts > p.supports ? "contradicts" : "supports";
       return { ...e, relation, probability: p[relation] };
     })
@@ -197,10 +214,30 @@ export async function judgeClaim(input: {
     .sort((x, y) => y.probability - x.probability)
     .slice(0, 3);
 
-  // A verdict is only shown when Jev is confident AND a passage backs it up.
-  const needed = verdict === "supported" ? "supports" : verdict === "contradicted" ? "contradicts" : null;
-  const backed = needed === null ? cited.length > 0 : cited.some((c) => c.relation === needed);
-  const confident = verdict !== "unverified" && overall.confidence >= THRESHOLDS.verdictConfidenceMin && backed;
+  const s = a.truth.score; // 0..4
+  const p = a.truth.probabilities;
+  const falseSide = (p["0"] ?? 0) + (p["1"] ?? 0);
+  const trueSide = (p["3"] ?? 0) + (p["4"] ?? 0);
+  const half = p["2"] ?? 0;
+  const truth = s / 4;
 
-  return { verdict, confidence: overall.confidence, confident, cited };
+  if (a.has_evidence.noul < THRESHOLDS.hasEvidenceMin && cited.length === 0) {
+    return { rating: "no_evidence", truth, firm: false, cited };
+  }
+  if (a.misleading.noul >= THRESHOLDS.misleadingMin && falseSide < 0.5) {
+    return { rating: "misleading", truth, firm: true, cited };
+  }
+  // Firm when most of the probability sits on one part of the scale (false side,
+  // true side, or the middle). Otherwise it's only a lean.
+  if (falseSide >= THRESHOLDS.firmMin) {
+    return { rating: (p["0"] ?? 0) >= (p["1"] ?? 0) ? "false" : "mostly_false", truth, firm: true, cited };
+  }
+  if (trueSide >= THRESHOLDS.firmMin) {
+    return { rating: (p["4"] ?? 0) >= (p["3"] ?? 0) ? "true" : "mostly_true", truth, firm: true, cited };
+  }
+  if (half >= THRESHOLDS.firmMin) {
+    return { rating: "half_true", truth, firm: true, cited };
+  }
+  const rating: Rating = s >= 2.5 ? "leaning_true" : s <= 1.5 ? "leaning_false" : "half_true";
+  return { rating, truth, firm: false, cited };
 }

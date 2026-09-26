@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Listener } from "@/lib/listener";
-import type { CheckEvent, CitedEvidence, EvidencePack, TranscriptLine, Verdict } from "@/lib/types";
+import type { CheckEvent, CitedEvidence, EvidencePack, Rating, TranscriptLine } from "@/lib/types";
 
 /** One speaker turn: sentences arrive one by one while they talk. */
 interface Turn {
@@ -531,14 +531,22 @@ function TurnView({ turn, name }: { turn: Turn; name: string }) {
   );
 }
 
-const VERDICT_UI: Record<Verdict | "unclear" | "checking", { label: string; icon: string; cls: string }> = {
-  supported: { label: "TRUE", icon: "✓", cls: "supported" },
-  contradicted: { label: "FALSE", icon: "✗", cls: "contradicted" },
+const RATING_UI: Record<Rating | "checking", { label: string; icon: string; cls: string; tentative?: boolean }> = {
+  true: { label: "TRUE", icon: "✓", cls: "supported" },
+  mostly_true: { label: "MOSTLY TRUE", icon: "✓", cls: "supported" },
+  half_true: { label: "HALF TRUE", icon: "½", cls: "misleading" },
   misleading: { label: "MISLEADING", icon: "!", cls: "misleading" },
-  unverified: { label: "UNVERIFIED", icon: "?", cls: "unclear" },
-  unclear: { label: "UNCLEAR", icon: "?", cls: "unclear" },
+  mostly_false: { label: "MOSTLY FALSE", icon: "✗", cls: "contradicted" },
+  false: { label: "FALSE", icon: "✗", cls: "contradicted" },
+  leaning_true: { label: "LEANING TRUE", icon: "✓", cls: "supported", tentative: true },
+  leaning_false: { label: "LEANING FALSE", icon: "✗", cls: "contradicted", tentative: true },
+  no_evidence: { label: "NO EVIDENCE", icon: "?", cls: "unclear", tentative: true },
   checking: { label: "CHECKING", icon: "", cls: "checking" },
 };
+
+/** +1 true side, -1 false side, 0 middle; null when there's nothing to compare. */
+const sideOf = (r: Rating) =>
+  r === "no_evidence" ? null : ["true", "mostly_true", "leaning_true"].includes(r) ? 1 : ["false", "mostly_false", "leaning_false"].includes(r) ? -1 : 0;
 
 function ClaimCard({ claim }: { claim: Claim }) {
   if (claim.status === "error") {
@@ -552,40 +560,34 @@ function ClaimCard({ claim }: { claim: Claim }) {
 
   const v = claim.verdict;
   const deep = claim.deep;
-  // The banner shows the best answer available: Jev when it's confident, else
-  // Claude's second opinion. While Claude works, Jev's lean shows right away.
-  let shown: keyof typeof VERDICT_UI = "checking";
+  // The banner shows the best answer available: Jev's rating when it's firm,
+  // else Claude's second opinion, else Jev's lean (shown right away).
+  let shown: keyof typeof RATING_UI = "checking";
   let by = "";
-  let leaning = false;
   if (claim.status === "done" && v) {
-    const jevPct = `${Math.round(v.confidence * 100)}%`;
-    if (v.confident) {
-      shown = v.verdict;
-      by = `Jev · ${jevPct}`;
-      // Claude's second opinion on numbers can overrule; make a disagreement visible.
-      if (deep && deep.verdict !== v.verdict) by += ` · ⚠ Claude says ${VERDICT_UI[deep.verdict].label.toLowerCase()}`;
-    } else if (deep) {
-      shown = deep.verdict === "unverified" ? "unclear" : deep.verdict;
-      by = `Claude · Jev leaned ${VERDICT_UI[v.verdict].label.toLowerCase()}`;
-    } else if (v.verdict !== "unverified") {
-      shown = v.verdict;
-      leaning = true;
-      by = `Jev · ${jevPct}`;
+    if (v.firm || !deep) {
+      shown = v.rating;
+      by = "Jev";
+      const jevSide = sideOf(v.rating);
+      const claudeSide = deep ? sideOf(deep.rating) : null;
+      if (deep && jevSide !== null && claudeSide !== null && jevSide !== claudeSide) {
+        by += ` · ⚠ Claude: ${RATING_UI[deep.rating].label.toLowerCase()}`;
+      }
     } else {
-      shown = "unclear";
-      by = "Jev found no clear evidence";
+      shown = deep.rating;
+      by = `Claude · Jev: ${RATING_UI[v.rating].label.toLowerCase()}`;
     }
   }
-  const ui = VERDICT_UI[shown];
-  const disagrees = v?.confident && deep && deep.verdict !== v.verdict;
+  const ui = RATING_UI[shown];
 
   return (
-    <div className={`verdict-card ${leaning ? "unclear" : ui.cls}`}>
-      <div className={`verdict-banner ${leaning ? `leaning ${ui.cls}` : ""}`}>
+    <div className={`verdict-card ${ui.tentative ? "unclear" : ui.cls}`}>
+      <div className={`verdict-banner ${ui.tentative ? `leaning ${ui.cls}` : ""}`}>
         {shown === "checking" ? <span className="spinner big" /> : <span className="verdict-icon">{ui.icon}</span>}
-        <span className="verdict-label">{leaning ? `LEANING ${ui.label}` : ui.label}</span>
+        <span className="verdict-label">{ui.label}</span>
         {by && <span className="verdict-by">{by}</span>}
       </div>
+      {v && v.rating !== "no_evidence" && <TruthMeter truth={v.truth} />}
       <span className="claim-text">
         “{claim.text}”{claim.updated && <span className="updated"> · updated</span>}
       </span>
@@ -595,10 +597,9 @@ function ClaimCard({ claim }: { claim: Claim }) {
       {deep && (
         <details className="src">
           <summary>
-            <span className={`rel ${deep.verdict}`}>Claude</span> {deep.explanation}
+            <span className={`rel ${RATING_UI[deep.rating].cls}`}>Claude: {RATING_UI[deep.rating].label.toLowerCase()}</span> — {deep.explanation}
           </summary>
           <div className="src-body">
-            {disagrees && <p style={{ margin: "0 0 6px" }}>Claude disagrees with Jev: {VERDICT_UI[deep.verdict].label}.</p>}
             <p style={{ margin: "0 0 6px" }}>{deep.explanation}</p>
             {deep.sources.slice(0, 3).map((s) => (
               <div key={s.url}>
@@ -622,6 +623,19 @@ function ClaimCard({ claim }: { claim: Claim }) {
           {v.timings.verdictMs})
         </span>
       )}
+    </div>
+  );
+}
+
+/** Jev's probability-weighted truth score as a small red-to-green meter. */
+function TruthMeter({ truth }: { truth: number }) {
+  const pct = Math.round(Math.min(1, Math.max(0, truth)) * 100);
+  return (
+    <div className="meter" role="img" aria-label={`Truth score ${pct} percent`}>
+      <div className="meter-track">
+        <span className="meter-mark" style={{ left: `${pct}%` }} />
+      </div>
+      <span className="meter-value">{pct}% true</span>
     </div>
   );
 }

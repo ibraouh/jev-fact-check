@@ -40,7 +40,17 @@ export interface CheckRequest {
 }
 
 export type ClaimKind = "statistic" | "event" | "policy" | "other_fact";
-export type Verdict = "supported" | "contradicted" | "misleading" | "unverified";
+/** PolitiFact-style ratings. "leaning_*" means Jev's probability is spread out. */
+export type Rating =
+  | "true"
+  | "mostly_true"
+  | "half_true"
+  | "mostly_false"
+  | "false"
+  | "misleading"
+  | "leaning_true"
+  | "leaning_false"
+  | "no_evidence";
 
 export interface Evidence {
   id: string;
@@ -70,10 +80,11 @@ export type CheckEvent =
     }
   | {
       type: "verdict";
-      verdict: Verdict;
-      confidence: number;
-      /** False when confidence or evidence is too weak to show a verdict. */
-      confident: boolean;
+      rating: Rating;
+      /** Probability-weighted truth, 0 (false) to 1 (true). */
+      truth: number;
+      /** False for "leaning" and "no evidence" ratings. */
+      firm: boolean;
       cited: CitedEvidence[];
       evidenceCount: number;
       path: "pack" | "search";
@@ -83,7 +94,7 @@ export type CheckEvent =
     }
   | {
       type: "deep";
-      verdict: Verdict;
+      rating: Rating;
       explanation: string;
       sources: { title: string; url: string }[];
       ms: number;

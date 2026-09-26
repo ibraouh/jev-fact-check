@@ -12,15 +12,19 @@ mic ──► Deepgram (live transcript + who's speaking)
           ▼
         evidence: Claude's pre-built evidence pack ── or ── Brave live search
           ▼
-        Jev: does each passage support / contradict it? overall verdict + confidence     (~150 ms)
+        Jev: truth score on a 5-level scale + "is there evidence?" + "misleading?" + per-source (~150 ms)
           ▼
         card on screen  ──►  Claude double-checks numbers and unsure claims in the background
 ```
 
 If a sentence adds to an earlier claim ("…and that was in 2023"), that card is re-checked with the
 combined claim instead of getting a new card. There is no LLM in the live path. Claude works **before** the debate (building the evidence pack) and in
-the **background** (second opinions). Jev makes every per-sentence decision. A verdict is only shown when
-Jev is confident *and* a cited passage backs it; otherwise the card shows the evidence and says "Unclear".
+the **background** (second opinions). Jev makes every per-sentence decision.
+
+Ratings follow the PolitiFact scale: **True, Mostly true, Half true, Mostly false, False**, plus **Misleading**.
+Code reads them from where Jev's probability sits on the scale. When it's spread out, the card says
+**Leaning true / Leaning false** and Claude double-checks. **No evidence** means the sources didn't address
+the claim. Each card also shows Jev's truth score as a percentage meter.
 
 ## Get the API keys
 
