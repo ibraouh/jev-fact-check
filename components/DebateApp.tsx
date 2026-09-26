@@ -27,6 +27,7 @@ interface Claim {
 }
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+const formatClock = (sec: number) => `${String(Math.floor(sec / 60)).padStart(2, "0")}:${String(sec % 60).padStart(2, "0")}`;
 
 const store = {
   get(key: string) {
@@ -108,17 +109,44 @@ function PasscodeGate({ onUnlock }: { onUnlock: (p: string) => void }) {
   };
   return (
     <form className="screen" onSubmit={submit}>
-      <h1 className="title">Live Fact Check</h1>
+      <div className="topbar">
+        <h1 className="title">
+          <span className="prompt">$</span>factcheck --live
+        </h1>
+        <ThemeToggle />
+      </div>
       <p className="subtitle">Enter the app passcode to continue.</p>
       <div className="field">
-        <label htmlFor="pc">Passcode</label>
+        <label htmlFor="pc">passcode</label>
         <input id="pc" className="input" type="password" value={value} onChange={(e) => setValue(e.target.value)} autoFocus />
       </div>
       {error && <p className="error">{error}</p>}
       <button className="btn btn-primary btn-big" disabled={!value}>
-        Unlock
+        unlock
       </button>
     </form>
+  );
+}
+
+const THEMES = ["dark", "light", "system"] as const;
+type Theme = (typeof THEMES)[number];
+
+/** Cycles dark → light → system. Dark is the default (set before paint in layout.tsx). */
+function ThemeToggle() {
+  const [theme, setTheme] = useState<Theme>("dark");
+  useEffect(() => setTheme((store.get("theme") as Theme) || "dark"), []);
+  const next = () => {
+    const t = THEMES[(THEMES.indexOf(theme) + 1) % THEMES.length];
+    setTheme(t);
+    store.set("theme", t);
+    if (t === "system") delete document.documentElement.dataset.theme;
+    else document.documentElement.dataset.theme = t;
+  };
+  const icon = theme === "dark" ? "☾" : theme === "light" ? "☀" : "◐";
+  return (
+    <button className="chip" onClick={next} aria-label={`Theme: ${theme}. Tap to change.`} title={`theme: ${theme}`}>
+      {icon}
+    </button>
   );
 }
 
@@ -164,11 +192,16 @@ function SetupScreen(props: {
 
   return (
     <div className="screen">
-      <h1 className="title">Live Fact Check</h1>
-      <p className="subtitle">Listens to your debate and checks factual claims as they're made.</p>
+      <div className="topbar">
+        <h1 className="title">
+          <span className="prompt">$</span>factcheck --live
+        </h1>
+        <ThemeToggle />
+      </div>
+      <p className="subtitle">Listens to a debate and fact-checks each claim as it's spoken.</p>
 
       <div className="field">
-        <label htmlFor="topic">Debate topic</label>
+        <label htmlFor="topic">topic</label>
         <input
           id="topic"
           className="input"
@@ -180,34 +213,34 @@ function SetupScreen(props: {
 
       <div className="row">
         <div className="field">
-          <label htmlFor="a">Speaker 1</label>
+          <label htmlFor="a">speaker_1</label>
           <input id="a" className="input" placeholder="You" value={setup.nameA} onChange={(e) => setSetup({ ...setup, nameA: e.target.value })} />
         </div>
         <div className="field">
-          <label htmlFor="b">Speaker 2</label>
+          <label htmlFor="b">speaker_2</label>
           <input id="b" className="input" placeholder="Opponent" value={setup.nameB} onChange={(e) => setSetup({ ...setup, nameB: e.target.value })} />
         </div>
       </div>
 
-      <div className="card" style={{ marginBottom: 12 }}>
-        <strong>Evidence pack</strong>
+      <div className="card">
+        <span className="card-title">evidence pack</span>
         <p className="hint" style={{ margin: "4px 0 10px" }}>
-          Optional. Claude researches the topic now so claims it covers get checked in about half a second, with no live search.
+          Optional. Claude researches the topic first, so claims it covers are checked in ~0.3s with no live search.
         </p>
         {packMatches ? (
           <p className="hint" style={{ margin: "0 0 10px" }}>
-            ✓ Ready: {plural(pack.topics.length, "topic")}, {plural(pack.topics.reduce((n, t) => n + t.facts.length, 0), "fact")}
+            <span style={{ color: "var(--ok)" }}>✓ ready</span> · {plural(pack.topics.length, "topic")}, {plural(pack.topics.reduce((n, t) => n + t.facts.length, 0), "fact")}
           </p>
         ) : null}
         <button className="btn" style={{ width: "100%" }} onClick={prep} disabled={prepping || !setup.topic.trim()}>
           {prepping ? (
             <>
-              <span className="spinner" /> Researching… {elapsed}s
+              <span className="spinner" /> researching… {elapsed}s
             </>
           ) : packMatches ? (
-            "Rebuild evidence pack"
+            "rebuild pack"
           ) : (
-            "Build evidence pack (1–3 min)"
+            "build pack (1–3 min)"
           )}
         </button>
         {prepError && <p className="error">{prepError}</p>}
@@ -215,18 +248,18 @@ function SetupScreen(props: {
 
       <label className="toggle">
         <span>
-          Claude double-checks
-          <small>Numbers and uncertain claims get a second look a few seconds later</small>
+          claude double-checks
+          <small>Numbers and uncertain claims get a second opinion a few seconds later</small>
         </span>
         <input type="checkbox" checked={setup.deepChecks} onChange={(e) => setSetup({ ...setup, deepChecks: e.target.checked })} />
       </label>
 
       <div className="spacer" />
       <p className="hint" style={{ textAlign: "center" }}>
-        Put the phone between both speakers. Let the other person know it's listening.
+        Put the phone between both speakers, and let the other person know it's listening.
       </p>
       <button className="btn btn-primary btn-big" onClick={props.onStart}>
-        🎙 Start listening
+        ▶ start listening
       </button>
     </div>
   );
@@ -249,6 +282,7 @@ function LiveScreen(props: {
   const [swapped, setSwapped] = useState(false);
   const [typed, setTyped] = useState("");
   const [atBottom, setAtBottom] = useState(true);
+  const [elapsed, setElapsed] = useState(0);
   const listener = useRef<Listener | null>(null);
   const barRef = useRef<HTMLDivElement | null>(null);
   const turnsRef = useRef<Turn[]>([]);
@@ -384,6 +418,13 @@ function LiveScreen(props: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Session clock: counts only while actually listening.
+  useEffect(() => {
+    if (status !== "live") return;
+    const t = setInterval(() => setElapsed((e) => e + 1), 1000);
+    return () => clearInterval(t);
+  }, [status]);
+
   // Keep the screen awake while listening.
   useEffect(() => {
     let lock: WakeLockSentinel | null = null;
@@ -435,7 +476,7 @@ function LiveScreen(props: {
   const dotClass =
     status === "live" ? "dot live" : status === "reconnecting" || status === "connecting" || paused ? "dot warn" : "dot";
   const statusText =
-    ({ live: "Listening", connecting: "Connecting…", reconnecting: "Reconnecting…", paused: "Paused", error: "Mic error", stopped: "Ended" } as Record<string, string>)[status] ??
+    ({ live: "live", connecting: "connecting…", reconnecting: "reconnecting…", paused: "paused", error: "mic error", stopped: "ended" } as Record<string, string>)[status] ??
     status;
 
   return (
@@ -444,21 +485,25 @@ function LiveScreen(props: {
         <span className="status">
           <span className={dotClass} /> {statusText}
         </span>
+        <span className="timer">{formatClock(elapsed)}</span>
         <span className="spacer" />
         <button className="chip" aria-pressed={claimsOnly} onClick={() => setClaimsOnly((v) => !v)}>
-          Claims only
+          claims
         </button>
-        <button className="chip" onClick={() => setSwapped((v) => !v)} title="Swap speaker names">
-          ⇄ Names
+        <button className="chip" onClick={() => setSwapped((v) => !v)} title="Swap speaker names" aria-label="Swap speaker names">
+          ⇄
         </button>
+        <ThemeToggle />
       </header>
 
       {status === "error" && <p className="error">{statusDetail || "Something went wrong with the microphone."}</p>}
 
       <main className="feed" aria-live="polite">
         {visible.length === 0 && !interim && (
-          <p className="hint" style={{ textAlign: "center", marginTop: 40 }}>
-            Start talking. Each factual claim gets a card as soon as the sentence ends{pack ? " (evidence pack loaded)" : ""}.
+          <p className="empty">
+            waiting for speech<span className="caret" />
+            <br />
+            <span className="hint">Each claim gets a card when its sentence ends{pack ? " · evidence pack loaded" : ""}.</span>
           </p>
         )}
         {visible.map((t) => (
@@ -466,17 +511,20 @@ function LiveScreen(props: {
         ))}
         {interim && (
           <div className="line interim">
-            <span className="speaker" style={{ color: `var(--speaker-${interim.speaker % 3})` }}>
-              {nameOf(interim.speaker)}
+            <span className="line-text">
+              <span className="speaker" style={{ color: `var(--speaker-${interim.speaker % 3})` }}>
+                {nameOf(interim.speaker).toLowerCase()}
+              </span>
+              {interim.text}
+              <span className="caret" />
             </span>
-            <span className="line-text">{interim.text}</span>
           </div>
         )}
       </main>
 
       {!atBottom && (
         <button className="chip jump" onClick={() => window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" })}>
-          ↓ Latest
+          ↓ latest
         </button>
       )}
 
@@ -490,23 +538,23 @@ function LiveScreen(props: {
             setTyped("");
           }}
         >
-          <input className="input" placeholder={`Type a claim as ${nameOf(0)}…`} value={typed} onChange={(e) => setTyped(e.target.value)} />
+          <input className="input" placeholder={`type a claim as ${nameOf(0).toLowerCase()}…`} value={typed} onChange={(e) => setTyped(e.target.value)} />
           <button className="btn" disabled={!typed.trim()} aria-label="Check typed claim">
-            Check
+            check
           </button>
         </form>
         <div className="bottom-bar-inner">
           {ended ? (
             <button className="btn btn-primary btn-big" onClick={props.onExit}>
-              New debate
+              new debate
             </button>
           ) : (
             <>
               <button className="btn btn-big" onClick={togglePause} disabled={status === "error" || status === "connecting"}>
-                {paused ? "▶ Resume" : "❚❚ Pause"}
+                {paused ? "▶ resume" : "❚❚ pause"}
               </button>
               <button className="btn btn-danger btn-big" onClick={end}>
-                ■ End
+                ■ end
               </button>
             </>
           )}
@@ -519,10 +567,12 @@ function LiveScreen(props: {
 function TurnView({ turn, name }: { turn: Turn; name: string }) {
   return (
     <div className={`line ${turn.claims.length === 0 ? "dim" : ""}`}>
-      <span className="speaker" style={{ color: `var(--speaker-${turn.speaker % 3})` }}>
-        {name}
+      <span className="line-text">
+        <span className="speaker" style={{ color: `var(--speaker-${turn.speaker % 3})` }}>
+          {name.toLowerCase()}
+        </span>
+        {turn.sentences.join(" ")}
       </span>
-      <span className="line-text">{turn.sentences.join(" ")}</span>
       {turn.claims.map((c) => (
         <ClaimCard key={c.id} claim={c} />
       ))}
@@ -567,24 +617,24 @@ function ClaimCard({ claim }: { claim: Claim }) {
   if (claim.status === "done" && v) {
     if (v.firm || !deep) {
       shown = v.rating;
-      by = "Jev";
+      by = "jev";
       const jevSide = sideOf(v.rating);
       const claudeSide = deep ? sideOf(deep.rating) : null;
       if (deep && jevSide !== null && claudeSide !== null && jevSide !== claudeSide) {
-        by += ` · ⚠ Claude: ${RATING_UI[deep.rating].label.toLowerCase()}`;
+        by += ` · ⚠ claude: ${RATING_UI[deep.rating].label.toLowerCase()}`;
       }
     } else {
       shown = deep.rating;
-      by = `Claude · Jev: ${RATING_UI[v.rating].label.toLowerCase()}`;
+      by = `claude · jev: ${RATING_UI[v.rating].label.toLowerCase()}`;
     }
   }
   const ui = RATING_UI[shown];
 
   return (
-    <div className={`verdict-card ${ui.tentative ? "unclear" : ui.cls}`}>
-      <div className={`verdict-banner ${ui.tentative ? `leaning ${ui.cls}` : ""}`}>
-        {shown === "checking" ? <span className="spinner big" /> : <span className="verdict-icon">{ui.icon}</span>}
-        <span className="verdict-label">{ui.label}</span>
+    <div className={`verdict-card ${ui.cls} ${ui.tentative ? "tentative" : ""} ${shown === "checking" ? "checking" : ""}`}>
+      <div className="verdict-banner">
+        {shown === "checking" && <span className="spinner" style={{ color: "var(--muted)" }} />}
+        <span className="verdict-label">{shown === "checking" ? "checking…" : ui.label}</span>
         {by && <span className="verdict-by">{by}</span>}
       </div>
       {v && v.rating !== "no_evidence" && <TruthMeter truth={v.truth} />}
@@ -597,7 +647,7 @@ function ClaimCard({ claim }: { claim: Claim }) {
       {deep && (
         <details className="src">
           <summary>
-            <span className={`rel ${RATING_UI[deep.rating].cls}`}>Claude: {RATING_UI[deep.rating].label.toLowerCase()}</span> — {deep.explanation}
+            <span className={`rel ${RATING_UI[deep.rating].cls}`}>claude: {RATING_UI[deep.rating].label.toLowerCase()}</span> — {deep.explanation}
           </summary>
           <div className="src-body">
             <p style={{ margin: "0 0 6px" }}>{deep.explanation}</p>
@@ -608,19 +658,18 @@ function ClaimCard({ claim }: { claim: Claim }) {
                 </a>
               </div>
             ))}
-            <div className="meta">Claude {(deep.ms / 1000).toFixed(1)}s</div>
+            <div className="meta">claude {(deep.ms / 1000).toFixed(1)}s</div>
           </div>
         </details>
       )}
       {claim.deepPending && (
         <span className="meta" style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <span className="spinner" /> Claude double-checking…
+          <span className="spinner" /> claude double-checking…
         </span>
       )}
       {v && (
         <span className="meta">
-          {v.path === "pack" ? "Evidence pack" : "Live search"} · {v.timings.totalMs}ms (Jev {v.timings.claimMs} · evidence {v.timings.evidenceMs} · Jev{" "}
-          {v.timings.verdictMs})
+          jev {v.timings.claimMs}ms → {v.path} {v.timings.evidenceMs}ms → jev {v.timings.verdictMs}ms = {v.timings.totalMs}ms
         </span>
       )}
     </div>
@@ -635,7 +684,7 @@ function TruthMeter({ truth }: { truth: number }) {
       <div className="meter-track">
         <span className="meter-mark" style={{ left: `${pct}%` }} />
       </div>
-      <span className="meter-value">{pct}% true</span>
+      <span className="meter-value">{pct}%</span>
     </div>
   );
 }
@@ -651,7 +700,7 @@ function SourceRow({ c }: { c: CitedEvidence }) {
       <div className="src-body">
         <p style={{ margin: "0 0 6px" }}>{c.text}</p>
         <a href={c.url} target="_blank" rel="noreferrer">
-          Open source ↗
+          open source ↗
         </a>
       </div>
     </details>

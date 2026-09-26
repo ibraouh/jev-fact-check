@@ -1,23 +1,22 @@
+/* Terminal-style theme. Light tokens are the base; dark applies by default
+   (data-theme="dark", set before paint) or via the system setting. */
 :root {
-  --bg: #f7f7f5;
+  --bg: #f6f7f9;
   --surface: #ffffff;
-  --surface-2: #efefec;
-  --text: #17171a;
-  --muted: #6b6b73;
-  --border: #e2e2de;
-  --accent: #2f5bd3;
-  --speaker-0: #2f5bd3;
-  --speaker-1: #9b3fc7;
-  --speaker-2: #c26a12;
-  --ok: #1f8a4c;
-  --ok-bg: #e5f4ea;
-  --bad: #c9302c;
-  --bad-bg: #fbe7e6;
-  --warn: #a86a00;
-  --warn-bg: #fdf1dc;
-  --neutral: #6b6b73;
-  --neutral-bg: #ececea;
-  --radius: 14px;
+  --surface-2: #eef0f3;
+  --text: #1b1f24;
+  --muted: #6a737d;
+  --faint: #9aa3ad;
+  --border: #dde1e6;
+  --accent: #0969da;
+  --speaker-0: #0969da;
+  --speaker-1: #8250df;
+  --speaker-2: #bc4c00;
+  --ok: #1a7f37;
+  --bad: #cf222e;
+  --warn: #9a6700;
+  --neutral: #6a737d;
+  --radius: 8px;
   --safe-bottom: env(safe-area-inset-bottom, 0px);
   --safe-top: env(safe-area-inset-top, 0px);
   color-scheme: light;
@@ -25,26 +24,42 @@
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --bg: #111113;
-    --surface: #1b1b1e;
-    --surface-2: #252529;
-    --text: #ededee;
-    --muted: #9a9aa3;
-    --border: #2d2d32;
-    --accent: #7b9cff;
-    --speaker-0: #7b9cff;
-    --speaker-1: #d08bf0;
-    --speaker-2: #f0a860;
-    --ok: #4cc27f;
-    --ok-bg: #16301f;
-    --bad: #ff7b72;
-    --bad-bg: #3a1a19;
-    --warn: #f2b84b;
-    --warn-bg: #352812;
-    --neutral: #a0a0a8;
-    --neutral-bg: #2a2a2e;
+    --bg: #0b0d10;
+    --surface: #11151a;
+    --surface-2: #171c22;
+    --text: #d6dde6;
+    --muted: #7d8793;
+    --faint: #4b545e;
+    --border: #1f262e;
+    --accent: #5aa9ff;
+    --speaker-0: #5aa9ff;
+    --speaker-1: #c792ea;
+    --speaker-2: #f78c6c;
+    --ok: #3fd68b;
+    --bad: #ff6b6b;
+    --warn: #ffc857;
+    --neutral: #7d8793;
     color-scheme: dark;
   }
+}
+
+:root[data-theme="dark"] {
+  --bg: #0b0d10;
+  --surface: #11151a;
+  --surface-2: #171c22;
+  --text: #d6dde6;
+  --muted: #7d8793;
+  --faint: #4b545e;
+  --border: #1f262e;
+  --accent: #5aa9ff;
+  --speaker-0: #5aa9ff;
+  --speaker-1: #c792ea;
+  --speaker-2: #f78c6c;
+  --ok: #3fd68b;
+  --bad: #ff6b6b;
+  --warn: #ffc857;
+  --neutral: #7d8793;
+  color-scheme: dark;
 }
 
 * {
@@ -57,9 +72,9 @@ body {
   padding: 0;
   background: var(--bg);
   color: var(--text);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  font-size: 16px;
-  line-height: 1.45;
+  font-family: var(--font-mono), ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 15px;
+  line-height: 1.5;
   -webkit-text-size-adjust: 100%;
   -webkit-tap-highlight-color: transparent;
 }
@@ -89,39 +104,61 @@ a {
   padding: calc(var(--safe-top) + 12px) 16px calc(var(--safe-bottom) + 16px);
 }
 
+/* ── setup ─────────────────────────────────────────── */
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 8px 0 14px;
+}
+
 .title {
-  font-size: 1.6rem;
+  font-size: 1.15rem;
   font-weight: 700;
-  letter-spacing: -0.02em;
-  margin: 12px 0 4px;
+  margin: 0;
+}
+
+.title .prompt {
+  color: var(--ok);
+  margin-right: 8px;
 }
 
 .subtitle {
   color: var(--muted);
-  margin: 0 0 20px;
+  margin: 0 0 22px;
+  font-size: 0.85rem;
 }
 
 .field {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  margin-bottom: 16px;
+  margin-bottom: 14px;
 }
 
 .field label {
-  font-size: 0.85rem;
-  font-weight: 600;
+  font-size: 0.75rem;
   color: var(--muted);
+}
+
+.field label::before {
+  content: "// ";
+  color: var(--faint);
 }
 
 .input {
   width: 100%;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 12px 14px;
+  border-radius: var(--radius);
+  padding: 11px 12px;
   font-size: 16px; /* 16px stops iOS from zooming on focus */
   outline: none;
+}
+
+.input::placeholder {
+  color: var(--faint);
 }
 
 .input:focus {
@@ -142,7 +179,13 @@ a {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 14px;
+  padding: 12px;
+  margin-bottom: 12px;
+}
+
+.card-title {
+  font-weight: 700;
+  font-size: 0.9rem;
 }
 
 .toggle {
@@ -150,23 +193,24 @@ a {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 12px 14px;
+  padding: 12px;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--radius);
   margin-bottom: 12px;
+  font-size: 0.9rem;
 }
 
 .toggle small {
   display: block;
   color: var(--muted);
-  font-size: 0.8rem;
+  font-size: 0.75rem;
 }
 
 .toggle input {
-  width: 22px;
-  height: 22px;
-  accent-color: var(--accent);
+  width: 20px;
+  height: 20px;
+  accent-color: var(--ok);
   flex: none;
 }
 
@@ -177,52 +221,52 @@ a {
   gap: 8px;
   border: 1px solid var(--border);
   background: var(--surface);
-  border-radius: 12px;
-  padding: 12px 16px;
-  min-height: 48px;
-  font-weight: 600;
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  min-height: 46px;
+  font-weight: 500;
+  font-size: 0.9rem;
 }
 
 .btn:disabled {
-  opacity: 0.5;
+  opacity: 0.45;
   cursor: default;
 }
 
 .btn-primary {
-  background: var(--text);
+  background: var(--ok);
+  border-color: var(--ok);
   color: var(--bg);
-  border-color: var(--text);
+  font-weight: 700;
 }
 
 .btn-danger {
-  background: #c9302c; /* fixed so white text keeps its contrast in dark mode */
-  color: #fff;
-  border-color: #c9302c;
+  color: var(--bad);
+  border-color: color-mix(in srgb, var(--bad) 50%, var(--border));
 }
 
 .btn-big {
   width: 100%;
-  min-height: 60px;
-  font-size: 1.1rem;
-  border-radius: 16px;
+  min-height: 54px;
+  font-size: 1rem;
 }
 
 .error {
   color: var(--bad);
-  font-size: 0.9rem;
+  font-size: 0.8rem;
   margin: 8px 0;
 }
 
 .hint {
   color: var(--muted);
-  font-size: 0.85rem;
+  font-size: 0.78rem;
 }
 
 .spacer {
   flex: 1;
 }
 
-/* Live screen */
+/* ── live header ───────────────────────────────────── */
 
 .live-header {
   position: sticky;
@@ -230,7 +274,7 @@ a {
   z-index: 5;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   padding: calc(var(--safe-top) + 10px) 16px 10px;
   margin: calc(-1 * (var(--safe-top) + 12px)) -16px 0;
   background: color-mix(in srgb, var(--bg) 88%, transparent);
@@ -243,19 +287,26 @@ a {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: 0.85rem;
-  font-weight: 600;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.timer {
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
 }
 
 .dot {
-  width: 9px;
-  height: 9px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
   background: var(--neutral);
 }
 
 .dot.live {
   background: var(--bad);
+  box-shadow: 0 0 8px var(--bad);
   animation: pulse 1.4s ease-in-out infinite;
 }
 
@@ -272,23 +323,25 @@ a {
 .chip {
   border: 1px solid var(--border);
   background: var(--surface);
-  border-radius: 999px;
-  padding: 6px 12px;
-  font-size: 0.8rem;
-  font-weight: 600;
-  min-height: 34px;
+  border-radius: 6px;
+  padding: 5px 9px;
+  font-size: 0.75rem;
+  min-height: 32px;
+  min-width: 32px;
+  color: var(--muted);
 }
 
 .chip[aria-pressed="true"] {
-  background: var(--text);
-  color: var(--bg);
-  border-color: var(--text);
+  color: var(--ok);
+  border-color: var(--ok);
 }
+
+/* ── transcript ────────────────────────────────────── */
 
 .feed {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 16px;
   /* Room for the fixed bottom bar, measured at runtime, plus a gap. */
   padding: 14px 0 calc(var(--bar-h, 180px) + 24px);
 }
@@ -296,18 +349,21 @@ a {
 .line {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-}
-
-.speaker {
-  font-size: 0.75rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  gap: 8px;
 }
 
 .line-text {
-  font-size: 1.02rem;
+  font-size: 0.95rem;
+}
+
+.speaker {
+  font-weight: 700;
+  margin-right: 8px;
+}
+
+.speaker::after {
+  content: " ›";
+  color: var(--faint);
 }
 
 .line.dim .line-text {
@@ -316,115 +372,141 @@ a {
 
 .interim .line-text {
   color: var(--muted);
-  font-style: italic;
 }
 
+.caret {
+  display: inline-block;
+  width: 0.55em;
+  height: 1.05em;
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  background: var(--ok);
+  animation: blink 1s steps(1) infinite;
+}
+
+@keyframes blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+.empty {
+  color: var(--muted);
+  font-size: 0.85rem;
+  margin-top: 36px;
+  text-align: center;
+}
+
+/* ── claim cards ───────────────────────────────────── */
+
 .verdict-card {
+  --v: var(--neutral);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--v);
   border-radius: var(--radius);
-  border: 2px solid var(--border);
   background: var(--surface);
   padding: 10px 12px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 7px;
 }
 
-/* The whole card takes the verdict's color so it reads at a glance. */
 .verdict-card.supported {
-  border-color: var(--ok);
-  background: var(--ok-bg);
   --v: var(--ok);
 }
 
 .verdict-card.contradicted {
-  border-color: var(--bad);
-  background: var(--bad-bg);
   --v: var(--bad);
 }
 
 .verdict-card.misleading {
-  border-color: var(--warn);
-  background: var(--warn-bg);
   --v: var(--warn);
 }
 
-.verdict-card.unclear,
-.verdict-card.checking {
-  border-color: var(--border);
-  --v: var(--neutral);
+.verdict-card.tentative {
+  border-left-style: dashed;
 }
 
 .verdict-banner {
   display: flex;
   align-items: center;
   gap: 8px;
-  color: var(--v);
-}
-
-.verdict-icon {
-  display: inline-grid;
-  place-items: center;
-  width: 26px;
-  height: 26px;
-  border-radius: 50%;
-  background: var(--v);
-  color: var(--surface);
-  font-size: 0.95rem;
-  font-weight: 800;
-  flex: none;
 }
 
 .verdict-label {
-  font-size: 1.3rem;
-  font-weight: 850;
-  letter-spacing: 0.02em;
-  line-height: 1;
-}
-
-/* Jev's lean while Claude double-checks: verdict color, but visibly provisional. */
-.verdict-banner.leaning .verdict-label {
-  font-size: 1.05rem;
-}
-
-.verdict-banner.leaning.supported {
-  --v: var(--ok);
-}
-
-.verdict-banner.leaning.contradicted {
-  --v: var(--bad);
-}
-
-.verdict-banner.leaning.misleading {
-  --v: var(--warn);
-}
-
-.verdict-banner.leaning .verdict-icon {
-  background: transparent;
   color: var(--v);
-  border: 2px dashed var(--v);
+  font-size: 1.15rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+
+.verdict-label::before {
+  content: "● ";
+}
+
+.tentative .verdict-label::before {
+  content: "○ ";
+}
+
+.checking .verdict-label::before {
+  content: "";
 }
 
 .verdict-by {
   margin-left: auto;
-  font-size: 0.72rem;
-  font-weight: 600;
+  font-size: 0.7rem;
   color: var(--muted);
   text-align: right;
-  min-width: 0; /* wraps instead of pushing the card wider on small phones */
+  min-width: 0;
+}
+
+.claim-text {
+  font-size: 0.88rem;
 }
 
 .updated {
-  font-weight: 500;
-  font-size: 0.8rem;
+  color: var(--faint);
+  font-size: 0.72rem;
+}
+
+/* Truth meter: Jev's probability-weighted position from false to true. */
+.meter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.meter-track {
+  position: relative;
+  flex: 1;
+  height: 4px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, var(--bad), var(--warn) 50%, var(--ok));
+}
+
+.meter-mark {
+  position: absolute;
+  top: 50%;
+  width: 3px;
+  height: 14px;
+  border-radius: 1px;
+  background: var(--text);
+  transform: translate(-50%, -50%);
+}
+
+.meter-value {
+  font-size: 0.72rem;
   color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 /* Sources: one line each, tap to expand. */
 .src {
-  font-size: 0.8rem;
-  background: color-mix(in srgb, var(--surface) 70%, transparent);
-  border-radius: 8px;
-  padding: 5px 8px;
+  font-size: 0.75rem;
+  border-top: 1px dashed var(--border);
+  padding-top: 6px;
+  color: var(--muted);
 }
 
 .src summary {
@@ -439,25 +521,23 @@ a {
   display: none;
 }
 
-.src[open] summary {
-  white-space: normal;
-  display: -webkit-box;
-  -webkit-line-clamp: 1;
-  -webkit-box-orient: vertical;
+.src summary strong {
+  color: var(--text);
+  font-weight: 500;
 }
 
 .src-body {
   margin-top: 6px;
+  color: var(--text);
   overflow-wrap: anywhere;
 }
 
 .src-body a {
-  font-weight: 600;
   text-decoration: none;
 }
 
 .rel {
-  font-weight: 800;
+  font-weight: 700;
 }
 
 .rel.supported {
@@ -472,40 +552,25 @@ a {
   color: var(--warn);
 }
 
-.rel.unverified {
+.rel.unclear {
   color: var(--neutral);
 }
 
-.spinner.big {
-  width: 22px;
-  height: 22px;
-  border-width: 3px;
-}
-
-.claim-text {
-  font-weight: 600;
-  font-size: 0.95rem;
-}
-
 .meta {
-  font-size: 0.75rem;
-  color: var(--muted);
+  font-size: 0.68rem;
+  color: var(--faint);
   font-variant-numeric: tabular-nums;
 }
 
-.deep {
-  border-top: 1px dashed var(--border);
-  padding-top: 8px;
-  font-size: 0.92rem;
-}
-
 .spinner {
-  width: 12px;
-  height: 12px;
+  width: 11px;
+  height: 11px;
   border: 2px solid currentColor;
   border-right-color: transparent;
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
+  display: inline-block;
+  flex: none;
 }
 
 @keyframes spin {
@@ -513,6 +578,8 @@ a {
     transform: rotate(360deg);
   }
 }
+
+/* ── bottom bar ────────────────────────────────────── */
 
 .bottom-bar {
   position: fixed;
@@ -535,9 +602,10 @@ a {
 }
 
 .composer {
+  max-width: 640px;
+  margin: 0 auto 10px;
   display: flex;
   gap: 8px;
-  margin-bottom: 10px;
 }
 
 .jump {
@@ -550,46 +618,8 @@ a {
 
 @media (prefers-reduced-motion: reduce) {
   .dot.live,
-  .spinner {
+  .spinner,
+  .caret {
     animation: none;
   }
-}
-
-/* Truth meter: Jev's probability-weighted position on the false-to-true scale. */
-.meter {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.meter-track {
-  position: relative;
-  flex: 1;
-  height: 6px;
-  border-radius: 999px;
-  background: linear-gradient(90deg, var(--bad), var(--warn) 50%, var(--ok));
-  opacity: 0.85;
-}
-
-.meter-mark {
-  position: absolute;
-  top: 50%;
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  background: var(--surface);
-  border: 3px solid var(--text);
-  transform: translate(-50%, -50%);
-}
-
-.meter-value {
-  font-size: 0.72rem;
-  font-weight: 700;
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-
-.rel.unclear {
-  color: var(--neutral);
 }
