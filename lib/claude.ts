@@ -1,5 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
-import type { EvidencePack, PackTopic, TranscriptLine, Verdict } from "./types";
+import type { Evidence, EvidencePack, PackTopic, TranscriptLine, Verdict } from "./types";
 
 const MODEL = "claude-opus-5";
 
@@ -147,8 +147,14 @@ export async function deepCheck(input: {
   claim: string;
   speaker: string;
   recent: TranscriptLine[];
+  /** Passages Jev already judged, so Claude can often answer without searching. */
+  evidence: Evidence[];
 }): Promise<{ verdict: Verdict; explanation: string; sources: { title: string; url: string }[] }> {
   const context = input.recent.map((l) => `${l.speaker}: ${l.text}`).join("\n");
+  const passages = input.evidence
+    .slice(0, 8)
+    .map((e, i) => `[${i + 1}] ${e.source} (${e.url})\n${e.text.slice(0, 700)}`)
+    .join("\n\n");
   return runUntilSubmitted({
     system:
       "You fact-check claims made in a live spoken debate. Be fast and precise. Do arithmetic explicitly when numbers are involved. Account for exaggeration, cherry-picked time windows, and missing context.",
@@ -157,12 +163,15 @@ ${context}
 
 Claim by ${input.speaker}: "${input.claim}"
 
-Check this claim with web search (at most a few searches). Then call report_verdict with:
+Passages already retrieved for this claim:
+${passages || "(none)"}
+
+Decide from these passages if they are enough. Only use web search (one or two searches at most) if they don't settle the claim; speed matters because this is shown live. Then call report_verdict with:
 - verdict: supported, contradicted, misleading (partly true, exaggerated, or missing key context), or unverified
 - explanation: at most two short sentences a debater could glance at, including the correct figure if the claim's number is wrong
 - sources: the 1-3 pages you relied on`,
     tool: VERDICT_TOOL,
-    maxSearches: 3,
+    maxSearches: 2,
     effort: "low",
     maxTokens: 8000,
   });

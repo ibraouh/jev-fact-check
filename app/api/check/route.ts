@@ -92,7 +92,7 @@ export async function POST(request: Request) {
 
         if (needsDeep) {
           const deepStart = performance.now();
-          const deep = await deepCheck({ claim: detection.claim, speaker: body.speaker, recent: body.recent });
+          const deep = await deepCheck({ claim: detection.claim, speaker: body.speaker, recent: body.recent, evidence });
           send({ type: "deep", ...deep, ms: since(deepStart) });
         }
       } catch (err) {

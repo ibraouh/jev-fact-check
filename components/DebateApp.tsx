@@ -250,6 +250,7 @@ function LiveScreen(props: {
   const [typed, setTyped] = useState("");
   const [atBottom, setAtBottom] = useState(true);
   const listener = useRef<Listener | null>(null);
+  const barRef = useRef<HTMLDivElement | null>(null);
   const turnsRef = useRef<Turn[]>([]);
   const counter = useRef(0);
   turnsRef.current = turns;
@@ -400,6 +401,18 @@ function LiveScreen(props: {
     };
   }, []);
 
+  // The bottom bar's height varies (safe area, wrapping); pad the feed by the real
+  // height so the newest card is never hidden behind it.
+  useEffect(() => {
+    const bar = barRef.current;
+    if (!bar) return;
+    const ro = new ResizeObserver(() =>
+      document.documentElement.style.setProperty("--bar-h", `${bar.getBoundingClientRect().height}px`),
+    );
+    ro.observe(bar);
+    return () => ro.disconnect();
+  }, []);
+
   // Follow new text unless the user scrolled up to read something.
   useEffect(() => {
     const onScroll = () => setAtBottom(window.innerHeight + window.scrollY >= document.body.scrollHeight - 80);
@@ -467,7 +480,7 @@ function LiveScreen(props: {
         </button>
       )}
 
-      <div className="bottom-bar">
+      <div className="bottom-bar" ref={barRef}>
         <form
           className="composer"
           onSubmit={(e) => {
@@ -540,28 +553,37 @@ function ClaimCard({ claim }: { claim: Claim }) {
   const v = claim.verdict;
   const deep = claim.deep;
   // The banner shows the best answer available: Jev when it's confident, else
-  // Claude's second opinion, else "checking" while Claude works, else "unclear".
+  // Claude's second opinion. While Claude works, Jev's lean shows right away.
   let shown: keyof typeof VERDICT_UI = "checking";
   let by = "";
+  let leaning = false;
   if (claim.status === "done" && v) {
+    const jevPct = `${Math.round(v.confidence * 100)}%`;
     if (v.confident) {
       shown = v.verdict;
-      by = `Jev · ${Math.round(v.confidence * 100)}%`;
+      by = `Jev · ${jevPct}`;
+      // Claude's second opinion on numbers can overrule; make a disagreement visible.
+      if (deep && deep.verdict !== v.verdict) by += ` · ⚠ Claude says ${VERDICT_UI[deep.verdict].label.toLowerCase()}`;
     } else if (deep) {
       shown = deep.verdict === "unverified" ? "unclear" : deep.verdict;
-      by = "Claude";
-    } else if (!claim.deepPending) {
+      by = `Claude · Jev leaned ${VERDICT_UI[v.verdict].label.toLowerCase()}`;
+    } else if (v.verdict !== "unverified") {
+      shown = v.verdict;
+      leaning = true;
+      by = `Jev · ${jevPct}`;
+    } else {
       shown = "unclear";
+      by = "Jev found no clear evidence";
     }
   }
   const ui = VERDICT_UI[shown];
   const disagrees = v?.confident && deep && deep.verdict !== v.verdict;
 
   return (
-    <div className={`verdict-card ${ui.cls}`}>
-      <div className="verdict-banner">
+    <div className={`verdict-card ${leaning ? "unclear" : ui.cls}`}>
+      <div className={`verdict-banner ${leaning ? `leaning ${ui.cls}` : ""}`}>
         {shown === "checking" ? <span className="spinner big" /> : <span className="verdict-icon">{ui.icon}</span>}
-        <span className="verdict-label">{ui.label}</span>
+        <span className="verdict-label">{leaning ? `LEANING ${ui.label}` : ui.label}</span>
         {by && <span className="verdict-by">{by}</span>}
       </div>
       <span className="claim-text">
@@ -569,9 +591,6 @@ function ClaimCard({ claim }: { claim: Claim }) {
       </span>
 
       {v?.cited.slice(0, 3).map((c) => <SourceRow key={c.id} c={c} />)}
-      {v && !v.confident && v.cited.length === 0 && !deep && !claim.deepPending && (
-        <span className="hint">No clear evidence found.</span>
-      )}
 
       {deep && (
         <details className="src">
@@ -592,7 +611,7 @@ function ClaimCard({ claim }: { claim: Claim }) {
           </div>
         </details>
       )}
-      {claim.deepPending && v?.confident && (
+      {claim.deepPending && (
         <span className="meta" style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <span className="spinner" /> Claude double-checking…
         </span>

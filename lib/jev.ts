@@ -148,7 +148,7 @@ export async function judgeClaim(input: {
     return { verdict: "unverified", confidence: 0, confident: false, cited: [] };
   }
 
-  const evidence = input.evidence.map((e) => ({ id: e.id, source: e.source, text: e.text.slice(0, 700) }));
+  const evidence = input.evidence.map((e) => ({ id: e.id, source: e.source, text: e.text.slice(0, 1000) }));
   const state = {
     claim: input.claim,
     speaker: input.speaker,

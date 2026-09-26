@@ -20,7 +20,7 @@ export async function searchEvidence(query: string, maxPassages = 10): Promise<E
 
   const url = new URL("https://api.search.brave.com/res/v1/web/search");
   url.searchParams.set("q", query.slice(0, 380));
-  url.searchParams.set("count", "8");
+  url.searchParams.set("count", "10");
   url.searchParams.set("extra_snippets", "true");
   url.searchParams.set("safesearch", "moderate");
 
@@ -34,8 +34,8 @@ export async function searchEvidence(query: string, maxPassages = 10): Promise<E
   const passages: Evidence[] = [];
   for (const r of body.web?.results ?? []) {
     const source = r.profile?.name || r.meta_url?.hostname || new URL(r.url).hostname;
-    // The description plus the first extra snippet usually carry the relevant sentence.
-    const text = [r.description, ...(r.extra_snippets ?? []).slice(0, 2)]
+    // The description plus extra snippets give Jev enough text to be confident.
+    const text = [r.description, ...(r.extra_snippets ?? []).slice(0, 4)]
       .filter(Boolean)
       .map((t) => stripTags(t!))
       .join(" … ");
